@@ -1,42 +1,37 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TxIn {
-    pub tx_id: [u8; 32],
-    pub vout: u32,
-    pub sig: String,
-    pub sequence: u32,
+pub struct EthTx {
+    pub chain_id: u64,
+    pub nonce: u64,
+    pub gas_price: u64,
+    pub gas_limit: u64,
+    /// 20-byte recipient address (`None` indicates contract creation)
+    pub to: Option<[u8; 20]>,
+    /// Transfer value in wei
+    pub value: u128,
+    /// Calldata or contract initialization bytecode
+    pub data: Vec<u8>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TxOut {
-    pub value: u64,
-    pub scriptPubkey: Vec<u8>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Tx {
-    pub version: u32,
-    pub inputs: Vec<TxIn>,
-    pub outputs: Vec<TxOut>,
-    pub locktime: u32,
-}
-
-impl Tx {
-    pub fn new(version: u32, locktime: u32) -> Self {
+impl EthTx {
+    pub fn new(
+        chain_id: u64,
+        nonce: u64,
+        gas_price: u64,
+        gas_limit: u64,
+        to: Option<[u8; 20]>,
+        value: u128,
+        data: Vec<u8>,
+    ) -> Self {
         Self {
-            version,
-            inputs: Vec::new(),
-            outputs: Vec::new(),
-            locktime,
+            chain_id,
+            nonce,
+            gas_price,
+            gas_limit,
+            to,
+            value,
+            data,
         }
-    }
-
-    pub fn tx_in(&mut self, tx: TxIn) {
-        self.inputs.push(tx)
-    }
-
-    pub fn tx_out(&mut self, tx: TxOut) {
-        self.outputs.push(tx)
     }
 }

@@ -2,33 +2,39 @@ use jsonrpsee::core::RpcResult;
 use jsonrpsee::proc_macros::rpc;
 use serde::{Deserialize, Serialize};
 
-use super::merkle::{compute_merkle_root, double_sha256};
+use super::merkle::{compute_merkle_root, keccak256_hash};
 use crate::rpc::state::{decode, encode};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlockHeader {
-    pub version: u32,
-    pub prev_block_hash: [u8; 32],
-    pub merkle_root: [u8; 32],
-    pub timestamp: u32,
-    pub bits: u32,
-    pub nonce: u32,
+    pub parent_hash: [u8; 32],
+    pub state_root: [u8; 32],
+    pub transactions_root: [u8; 32],
+    pub number: u64,
+    pub gas_limit: u64,
+    pub gas_used: u64,
+    pub timestamp: u64,
+    pub difficulty: u32,
+    pub nonce: u64,
 }
 
 impl BlockHeader {
-    pub fn to_bytes(&self) -> [u8; 80] {
-        let mut bytes = [0u8; 80];
-        bytes[0..4].copy_from_slice(&self.version.to_le_bytes());
-        bytes[4..36].copy_from_slice(&self.prev_block_hash);
-        bytes[36..68].copy_from_slice(&self.merkle_root);
-        bytes[68..72].copy_from_slice(&self.timestamp.to_le_bytes());
-        bytes[72..76].copy_from_slice(&self.bits.to_le_bytes());
-        bytes[76..80].copy_from_slice(&self.nonce.to_le_bytes());
+    pub fn to_bytes(&self) -> [u8; 140] {
+        let mut bytes = [0u8; 140];
+        bytes[0..32].copy_from_slice(&self.parent_hash);
+        bytes[32..64].copy_from_slice(&self.state_root);
+        bytes[64..96].copy_from_slice(&self.transactions_root);
+        bytes[96..104].copy_from_slice(&self.number.to_be_bytes());
+        bytes[104..112].copy_from_slice(&self.gas_limit.to_be_bytes());
+        bytes[112..120].copy_from_slice(&self.gas_used.to_be_bytes());
+        bytes[120..128].copy_from_slice(&self.timestamp.to_be_bytes());
+        bytes[128..132].copy_from_slice(&self.difficulty.to_be_bytes());
+        bytes[132..140].copy_from_slice(&self.nonce.to_be_bytes());
         bytes
     }
 
     pub fn hash(&self) -> [u8; 32] {
-        double_sha256(&self.to_bytes())
+        keccak256_hash(&self.to_bytes())
     }
 
     pub fn meets_difficulty(&self, leading_zero_bytes: usize) -> bool {
@@ -41,22 +47,19 @@ impl BlockHeader {
         true
     }
 
-    /// Checks if the block hash hex starts with `leading_zero_hex_chars` zeroes
     pub fn meets_difficulty_hex(&self, leading_zero_hex_chars: usize) -> bool {
         let hash_hex = encode(&self.hash());
         hash_hex.chars().take(leading_zero_hex_chars).all(|c| c == '0')
     }
 
-    /// Increments `nonce` in a loop until the header's hash meets the byte difficulty target
-    pub fn mine(&mut self, leading_zero_bytes: usize) -> (u32, [u8; 32]) {
+    pub fn mine(&mut self, leading_zero_bytes: usize) -> (u64, [u8; 32]) {
         while !self.meets_difficulty(leading_zero_bytes) {
             self.nonce = self.nonce.wrapping_add(1);
         }
         (self.nonce, self.hash())
     }
 
-    /// Increments `nonce` in a loop until the header's hash meets the hex characters target
-    pub fn mine_hex(&mut self, leading_zero_hex_chars: usize) -> (u32, [u8; 32]) {
+    pub fn mine_hex(&mut self, leading_zero_hex_chars: usize) -> (u64, [u8; 32]) {
         while !self.meets_difficulty_hex(leading_zero_hex_chars) {
             self.nonce = self.nonce.wrapping_add(1);
         }
@@ -66,11 +69,12 @@ impl BlockHeader {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockTemplate {
-    pub prev_block_hash: String,
-    pub height: u64,
-    pub target_bits: u32,
+    pub parent_hash: String,
+    pub number: u64,
+    pub gas_limit: u64,
+    pub difficulty: u32,
     pub transactions: Vec<String>,
-    pub cur_time: u32,
+    pub timestamp: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -88,23 +92,25 @@ pub struct SubmitBlockParams {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenerateBlockResult {
-    pub nonce: u32,
+    pub nonce: u64,
     pub block_hash: String,
     pub header_hex: String,
-    pub height: u64,
+    pub number: u64,
 }
 
-/// Automatically searches for a valid nonce and returns the mined block
 pub fn generate_block(leading_zero_bytes: usize) -> GenerateBlockResult {
     let mut header = BlockHeader {
-        version: 1,
-        prev_block_hash: [0u8; 32],
-        merkle_root: [0u8; 32],
+        parent_hash: [0u8; 32],
+        state_root: [0u8; 32],
+        transactions_root: [0u8; 32],
+        number: 1,
+        gas_limit: 30_000_000,
+        gas_used: 0,
         timestamp: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
-            .as_secs() as u32,
-        bits: 0x1d00ffff,
+            .as_secs(),
+        difficulty: 1,
         nonce: 0,
     };
 
@@ -114,45 +120,50 @@ pub fn generate_block(leading_zero_bytes: usize) -> GenerateBlockResult {
         nonce,
         block_hash: encode(&hash),
         header_hex: encode(&header.to_bytes()),
-        height: 1,
+        number: 1,
     }
 }
 
 pub fn verify_and_submit_block(params: SubmitBlockParams) -> Result<SubmitBlockResult, &'static str> {
     let header_bytes = decode(&params.header_hex)?;
-    if header_bytes.len() != 80 {
-        return Err("Block header must be exactly 80 bytes (160 hex characters)");
+    if header_bytes.len() != 140 {
+        return Err("EVM block header must be exactly 140 bytes (280 hex characters)");
     }
 
-    let mut prev_block_hash = [0u8; 32];
-    prev_block_hash.copy_from_slice(&header_bytes[4..36]);
+    let mut parent_hash = [0u8; 32];
+    parent_hash.copy_from_slice(&header_bytes[0..32]);
 
-    let mut merkle_root = [0u8; 32];
-    merkle_root.copy_from_slice(&header_bytes[36..68]);
+    let mut state_root = [0u8; 32];
+    state_root.copy_from_slice(&header_bytes[32..64]);
+
+    let mut transactions_root = [0u8; 32];
+    transactions_root.copy_from_slice(&header_bytes[64..96]);
 
     let header = BlockHeader {
-        version: u32::from_le_bytes(header_bytes[0..4].try_into().unwrap()),
-        prev_block_hash,
-        merkle_root,
-        timestamp: u32::from_le_bytes(header_bytes[68..72].try_into().unwrap()),
-        bits: u32::from_le_bytes(header_bytes[72..76].try_into().unwrap()),
-        nonce: u32::from_le_bytes(header_bytes[76..80].try_into().unwrap()),
+        parent_hash,
+        state_root,
+        transactions_root,
+        number: u64::from_be_bytes(header_bytes[96..104].try_into().unwrap()),
+        gas_limit: u64::from_be_bytes(header_bytes[104..112].try_into().unwrap()),
+        gas_used: u64::from_be_bytes(header_bytes[112..120].try_into().unwrap()),
+        timestamp: u64::from_be_bytes(header_bytes[120..128].try_into().unwrap()),
+        difficulty: u32::from_be_bytes(header_bytes[128..132].try_into().unwrap()),
+        nonce: u64::from_be_bytes(header_bytes[132..140].try_into().unwrap()),
     };
 
-    // Calculate tx hashes to verify merkle root
     let mut tx_hashes = Vec::new();
     for tx_hex in &params.tx_hexes {
         let raw_tx = decode(tx_hex)?;
-        tx_hashes.push(double_sha256(&raw_tx));
+        tx_hashes.push(keccak256_hash(&raw_tx));
     }
 
     if !tx_hashes.is_empty() {
         let computed_root = compute_merkle_root(tx_hashes)?;
-        if computed_root != header.merkle_root {
+        if computed_root != header.transactions_root {
             return Ok(SubmitBlockResult {
                 accepted: false,
                 block_hash: encode(&header.hash()),
-                error: Some("Merkle root mismatch".to_string()),
+                error: Some("Transactions root mismatch".to_string()),
             });
         }
     }
@@ -196,41 +207,44 @@ impl Default for MiningRpcServerImpl {
 #[jsonrpsee::core::async_trait]
 impl MiningRpcServer for MiningRpcServerImpl {
     async fn get_block_template(&self) -> RpcResult<BlockTemplate> {
-        let (prev_block_hash, height) = if let Some(chain) = &self.chain {
+        let (parent_hash, number) = if let Some(chain) = &self.chain {
             let c = chain.read().await;
             (c.best_block_hash_hex(), c.height() + 1)
         } else {
-            ("0000000000000000000000000000000000000000000000000000000000000000".to_string(), 1)
+            (
+                "0000000000000000000000000000000000000000000000000000000000000000".to_string(),
+                1,
+            )
         };
 
-        let cur_time = std::time::SystemTime::now()
+        let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
-            .as_secs() as u32;
+            .as_secs();
 
         Ok(BlockTemplate {
-            prev_block_hash,
-            height,
-            target_bits: 0x1d00ffff,
+            parent_hash,
+            number,
+            gas_limit: 30_000_000,
+            difficulty: 1,
             transactions: Vec::new(),
-            cur_time,
+            timestamp,
         })
     }
 
     async fn submit_block(&self, params: SubmitBlockParams) -> RpcResult<SubmitBlockResult> {
         verify_and_submit_block(params).map_err(|err| {
-            jsonrpsee::types::ErrorObject::owned(
-                -32602,
-                err.to_string(),
-                None::<()>,
-            )
+            jsonrpsee::types::ErrorObject::owned(-32602, err.to_string(), None::<()>)
         })
     }
 
-    async fn generate(&self, difficulty_zero_bytes: Option<usize>) -> RpcResult<GenerateBlockResult> {
+    async fn generate(
+        &self,
+        difficulty_zero_bytes: Option<usize>,
+    ) -> RpcResult<GenerateBlockResult> {
         let diff = difficulty_zero_bytes.unwrap_or(1);
 
-        let (prev_hash, height) = if let Some(chain) = &self.chain {
+        let (parent_hash, number) = if let Some(chain) = &self.chain {
             let c = chain.read().await;
             (c.best_block_hash(), c.height() + 1)
         } else {
@@ -238,14 +252,17 @@ impl MiningRpcServer for MiningRpcServerImpl {
         };
 
         let mut header = BlockHeader {
-            version: 1,
-            prev_block_hash: prev_hash,
-            merkle_root: [0u8; 32],
+            parent_hash,
+            state_root: [0u8; 32],
+            transactions_root: [0u8; 32],
+            number,
+            gas_limit: 30_000_000,
+            gas_used: 0,
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
-                .as_secs() as u32,
-            bits: 0x1d00ffff,
+                .as_secs(),
+            difficulty: 1,
             nonce: 0,
         };
 
@@ -264,7 +281,7 @@ impl MiningRpcServer for MiningRpcServerImpl {
             nonce,
             block_hash: encode(&hash),
             header_hex: encode(&header.to_bytes()),
-            height,
+            number,
         })
     }
 }

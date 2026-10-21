@@ -1,20 +1,18 @@
-use sha2::{Digest, Sha256};
+use sha3::{Digest, Keccak256};
 
-pub fn double_sha256(data: &[u8]) -> [u8; 32] {
-    let first = Sha256::digest(data);
-    let second = Sha256::digest(first);
+pub fn keccak256_hash(data: &[u8]) -> [u8; 32] {
+    let digest = Keccak256::digest(data);
     let mut out = [0u8; 32];
-    out.copy_from_slice(&second);
+    out.copy_from_slice(&digest);
     out
 }
 
 pub fn compute_merkle_root(mut hashes: Vec<[u8; 32]>) -> Result<[u8; 32], &'static str> {
     if hashes.is_empty() {
-        return Err("Cannot compute merkle root of empty transaction list");
+        return Err("Cannot compute transactions root of empty transaction list");
     }
 
     while hashes.len() > 1 {
-        // Bitcoin rule: if odd number of hashes, duplicate the last one
         if hashes.len() % 2 != 0 {
             let last = *hashes.last().unwrap();
             hashes.push(last);
@@ -25,7 +23,7 @@ pub fn compute_merkle_root(mut hashes: Vec<[u8; 32]>) -> Result<[u8; 32], &'stat
             let mut combined = [0u8; 64];
             combined[..32].copy_from_slice(&chunk[0]);
             combined[32..].copy_from_slice(&chunk[1]);
-            next_level.push(double_sha256(&combined));
+            next_level.push(keccak256_hash(&combined));
         }
 
         hashes = next_level;
@@ -33,4 +31,3 @@ pub fn compute_merkle_root(mut hashes: Vec<[u8; 32]>) -> Result<[u8; 32], &'stat
 
     Ok(hashes[0])
 }
-

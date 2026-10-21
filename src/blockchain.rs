@@ -3,23 +3,26 @@ use tokio::sync::RwLock;
 
 use crate::rpc::mining::mining::BlockHeader;
 use crate::rpc::state::encode;
-use crate::transaction::Tx;
+use crate::transaction::EthTx;
 
 #[derive(Debug, Clone)]
 pub struct Block {
     pub header: BlockHeader,
-    pub transactions: Vec<Tx>,
+    pub transactions: Vec<EthTx>,
 }
 
 impl Block {
     pub fn genesis() -> Self {
         let header = BlockHeader {
-            version: 1,
-            prev_block_hash: [0u8; 32],
-            merkle_root: [0u8; 32],
-            timestamp: 1231006505,
-            bits: 0x1d00ffff,
-            nonce: 2083236893,
+            parent_hash: [0u8; 32],
+            state_root: [0u8; 32],
+            transactions_root: [0u8; 32],
+            number: 0,
+            gas_limit: 30_000_000,
+            gas_used: 0,
+            timestamp: 1438269988, // Ethereum Frontier genesis timestamp
+            difficulty: 1,
+            nonce: 42,
         };
         Self {
             header,
@@ -61,12 +64,12 @@ impl Blockchain {
     }
 
     pub fn add_block(&mut self, block: Block) -> Result<u64, &'static str> {
-        // Rule: Previous block hash must match current tip
-        if block.header.prev_block_hash != self.best_block_hash() {
-            return Err("Block rejected: prev_block_hash does not match chain tip");
+        // Rule: Parent block hash must match current canonical tip
+        if block.header.parent_hash != self.best_block_hash() {
+            return Err("Block rejected: parent_hash does not match chain tip");
         }
 
-        // Rule: Header must satisfy proof of work
+        // Rule: Header must satisfy Keccak-256 proof of work
         if !block.header.meets_difficulty(1) {
             return Err("Block rejected: invalid proof of work");
         }

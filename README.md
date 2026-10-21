@@ -1,54 +1,48 @@
-# Jay's Bitcoin Node
+# Jay's Toy EVM Node (`toyEVM`)
 
-A lightweight Bitcoin Script execution engine, JSON-RPC node interface, and peer-to-peer (P2P) gossip network written in Rust.
+A lightweight Ethereum Virtual Machine (EVM) bytecode execution engine, JSON-RPC 2.0 node interface, and peer-to-peer (P2P) gossip network written in Rust.
 
 ---
 
 ## Overview
 
-Jay's Bitcoin Node is a modular implementation of core Bitcoin primitives built from scratch. It models the end-to-end lifecycle of Bitcoin data, from low-level opcode evaluation and raw transaction serialization to block mining and decentralized peer-to-peer message gossiping.
+**Jay's Toy EVM Node** (`toyEVM`) is a modular, from-scratch implementation of core Ethereum execution and networking primitives in Rust. It models the end-to-end lifecycle of Ethereum execution and block production—from 256-bit stack evaluation, word-aligned linear memory, persistent key-value storage, and gas metering to transaction encoding, Keccak-256 block mining, and decentralized P2P gossiping.
 
 The system is split into four primary layers:
-1. **Script Engine:** A stack-based virtual machine executing Bitcoin Script bytecode with standard consensus rules.
-2. **Transaction Layer:** Binary encoding and decoding of transactions according to the Bitcoin wire protocol.
-3. **JSON-RPC Server:** A standard JSON-RPC 2.0 interface exposing endpoints for script evaluation, transaction creation, mining, and node inspection.
-4. **P2P Gossip Network:** An asynchronous TCP networking layer allowing multiple running nodes to discover each other, flood-relay transactions, and maintain synchronized mempools.
+1. **EVM Execution Engine:** A 256-bit stack-based virtual machine with linear memory, persistent contract storage, control-flow jumps (`JUMP`/`JUMPI`/`JUMPDEST`), and per-opcode gas metering.
+2. **Transaction Layer:** Binary encoding and decoding of Ethereum transactions (`EthTx`), supporting both value transfers (`to = Some(addr)`) and contract creation (`to = None`).
+3. **JSON-RPC Server:** A JSON-RPC 2.0 server (`jsonrpsee`) exposing endpoints for EVM bytecode execution (`eth_call` / `eval_bytecode`), raw transaction encoding/decoding, block mining, and node/txpool inspection.
+4. **P2P Gossip Network:** An asynchronous TCP networking layer (`tokio`) enabling multiple running nodes to discover bootnodes, gossip transactions and blocks, and maintain synchronized transaction pools.
 
 ---
 
 ## Features
 
-### 1. Bitcoin Script Engine
-- Implements primary execution stack and secondary alt-stack (`OP_TOALTSTACK`, `OP_FROMALTSTACK`).
-- Bytecode pushdata parsing (`0x00`, `0x01..=0x4b`, and opcodes).
-- Stack manipulation opcodes: `OP_DUP`, `OP_DROP`, `OP_SWAP`, `OP_VERIFY`, `OP_EQUAL`, `OP_EQUALVERIFY`.
-- Arithmetic operations: `OP_1ADD`, `OP_1SUB`, `OP_ADD`, `OP_SUB`.
-- Cryptographic hashing: `OP_HASH160` (SHA-256 followed by RIPEMD-160).
-- Bitcoin-compliant sign-magnitude numerical encoding and decoding (`encode_num`, `decode_num`).
-- Bitcoin truthiness validation (`is_true`), including negative zero rejection.
+### 1. Ethereum Virtual Machine (`ToyEvm`)
+- **256-bit Word Stack (`Stack`):** Capped at 1024 words per the Ethereum Yellow Paper specification.
+- **Word-Aligned Linear Memory (`Memory`):** Byte-addressable memory expanding dynamically in 32-byte word increments (`MLOAD`, `MSTORE`, `MSTORE8`, `MSIZE`).
+- **Persistent Contract Storage (`Storage`):** 32-byte key to 32-byte value storage (`SLOAD`, `SSTORE`) with zero-value slot clearing.
+- **Supported Opcodes (`Opcode`):**
+  - **Stop & Arithmetic:** `STOP` (`0x00`), `ADD` (`0x01`), `MUL` (`0x02`), `SUB` (`0x03`), `DIV` (`0x04`), `MOD` (`0x06`).
+  - **Comparison & Bitwise:** `LT` (`0x10`), `GT` (`0x11`), `EQ` (`0x14`), `ISZERO` (`0x15`), `AND` (`0x16`), `OR` (`0x17`), `XOR` (`0x18`), `NOT` (`0x19`).
+  - **Hashing:** `KECCAK256` (`0x20`).
+  - **Call Context:** `CALLVALUE` (`0x34`), `CALLDATALOAD` (`0x35`), `CALLDATASIZE` (`0x36`).
+  - **Stack, Memory, Storage & Flow:** `POP` (`0x50`), `MLOAD` (`0x51`), `MSTORE` (`0x52`), `MSTORE8` (`0x53`), `SLOAD` (`0x54`), `SSTORE` (`0x55`), `JUMP` (`0x56`), `JUMPI` (`0x57`), `PC` (`0x58`), `MSIZE` (`0x59`), `GAS` (`0x5a`), `JUMPDEST` (`0x5b`).
+  - **Push, Dup & Swap:** `PUSH0` (`0x5f`), `PUSH1`..`PUSH32` (`0x60`..`0x7f`), `DUP1` (`0x80`), `DUP2` (`0x81`), `SWAP1` (`0x90`), `SWAP2` (`0x91`).
+  - **Termination:** `RETURN` (`0xf3`), `REVERT` (`0xfd`), `INVALID` (`0xfe`).
 
-### 2. Transaction Serialization
-- Models `Tx`, `TxIn`, and `TxOut` with exact binary layouts.
-- Little-endian integer encoding for versions, output values (satoshis), sequences, and locktimes.
-- Wire parser with boundary checks to prevent buffer underflow or out-of-bounds panics.
-- Unsigned transaction construction and hex serialization.
+### 2. Transaction Serialization (`EthTx`)
+- Models Ethereum transaction fields: `chain_id`, `nonce`, `gas_price`, `gas_limit`, `to` (20-byte address or `None` for contract deployment), `value` (in wei), and `data` (calldata / initcode).
+- Big-endian wire encoding and boundary-checked decoding.
 
-### 3. Mining & Cryptography
-- Standard 80-byte `BlockHeader` layout (version, previous block hash, Merkle root, timestamp, difficulty bits, and nonce).
-- Full Merkle tree reduction algorithm (`compute_merkle_root`), including duplication of the final hash when the count is odd.
-- Proof of Work verification using double-SHA256 hashing.
-- Built-in nonce mining loop (`mine` and `generate`) with configurable difficulty.
+### 3. Block Header, Keccak-256 & Mining
+- 140-byte `BlockHeader` layout (`parent_hash`, `state_root`, `transactions_root`, `number`, `gas_limit`, `gas_used`, `timestamp`, `difficulty`, `nonce`).
+- Keccak-256 (`sha3::Keccak256`) header hashing and Merkle root calculation (`compute_merkle_root`).
+- Configurable proof-of-work mining loop (`mine` and `generate`).
 
-### 4. JSON-RPC 2.0 Server
-- Built on `jsonrpsee` with asynchronous request routing.
-- Hex decoding and encoding helper functions with odd-length and character validation.
-- Method routing across four distinct modules: State, Raw Transactions, Node Info, and Mining.
-
-### 5. P2P Gossip Networking
-- Asynchronous TCP communication powered by Tokio.
-- Wire protocol using newline-delimited JSON packets (`P2pMessage`).
-- Deduplication cache (`seen_transactions`) to prevent infinite message relay loops.
-- Live tracking of connected peers and dynamic mempool byte sizing.
+### 4. JSON-RPC 2.0 Server & P2P Gossip Networking
+- Default Ethereum JSON-RPC port `8545` and P2P bootnode port `30303` with automatic port fallback when running multiple local nodes.
+- Deduplicated transaction and block gossip over newline-delimited JSON TCP streams.
 
 ---
 
@@ -56,19 +50,20 @@ The system is split into four primary layers:
 
 ```
 src/
-├── lib.rs                  # Crate root re-exporting core modules
-├── main.rs                 # Node entrypoint, CLI argument parser, and server runner
-├── opcode.rs               # Opcode enum definitions and byte conversions
-├── executionStack.rs       # Dual-stack data structures and helper methods
-├── transaction.rs          # Tx, TxIn, and TxOut data models
+├── lib.rs                  # ToyEvm execution engine, Keccak-256 helper, and unit tests
+├── main.rs                 # Node entrypoint, CLI argument parser, and RPC/P2P runner
+├── opcode.rs               # EVM Opcode enum definitions and gas schedule
+├── executionStack.rs       # 256-bit Stack, linear Memory, and key-value Storage
+├── transaction.rs          # EthTx transaction model
+├── blockchain.rs           # Block and Blockchain state management
 ├── rpc/
 │   ├── mod.rs              # Re-exports all RPC traits and server implementations
-│   ├── state.rs            # eval_script endpoint and hex encoding/decoding
+│   ├── state.rs            # eth_call and eval_bytecode endpoints
 │   ├── raw_transactions.rs # decoderawtransaction and createrawtransaction
 │   ├── node.rs             # getblockchaininfo, getnetworkinfo, getmempoolinfo
 │   └── mining/
-│       ├── mod.rs          # Re-exports mining and Merkle tree utilities
-│       ├── merkle.rs       # double_sha256 and compute_merkle_root logic
+│       ├── mod.rs          # Re-exports mining and Keccak-256 Merkle utilities
+│       ├── merkle.rs       # keccak256_hash and compute_merkle_root logic
 │       └── mining.rs       # BlockHeader, getblocktemplate, submitblock, generate
 └── p2p/
     ├── mod.rs              # Re-exports Swarm and P2pMessage
@@ -79,74 +74,49 @@ src/
 
 ---
 
-## Installation & Requirements
+## Installation & Build
 
-Ensure you have Rust and Cargo installed (version 1.75 or later recommended).
-
-Clone the repository and verify the build:
 ```bash
 cargo check
 cargo build
+cargo test
 ```
 
 ---
 
 ## Running the Node
 
-### 1. Automatic Multi-Node Swarm (Zero Configuration)
-The node includes automatic port allocation and default seed discovery (similar to Bitcoin Core's DNS seed behavior). You can run multiple connected nodes simply by opening new terminals:
-
-**Terminal 1 (Seed Node):**
+**Terminal 1 (Bootnode):**
 ```bash
 cargo run
 ```
-- Binds P2P to `127.0.0.1:8001` (acts as the default seed node).
-- Binds JSON-RPC to `http://127.0.0.1:9944`.
+- Binds P2P to `127.0.0.1:30303` and JSON-RPC to `http://127.0.0.1:8545`.
 
 **Terminal 2 (Peer Node):**
 ```bash
 cargo run
 ```
-- Detects that ports `8001` and `9944` are busy.
-- Automatically selects the next available ports (`8002` for P2P, `9945` for RPC).
-- Automatically discovers and connects to the seed node at `127.0.0.1:8001`.
-
-Both nodes are now connected in a P2P swarm. Any transactions submitted to Node 1 will automatically gossip across the network to Node 2!
-
-### 2. Manual CLI Port Overrides (Optional)
-You can still manually specify custom ports or explicit peer addresses:
-```bash
-cargo run -- [rpc_port] [p2p_port] [extra_peer_address]
-```
-
-Example:
-```bash
-cargo run -- 9950 8010 127.0.0.1:8001
-```
+- Automatically selects the next free ports (`30304` for P2P, `8546` for RPC) and connects to the bootnode at `127.0.0.1:30303`.
 
 ---
 
-## JSON-RPC API Reference
+## JSON-RPC API Examples
 
-All requests follow the standard JSON-RPC 2.0 specification via HTTP POST.
+### 1. `eth_call` / `eval_bytecode`
+Executes EVM bytecode (`6002600301` = `PUSH1 0x02 PUSH1 0x03 ADD`).
 
-### 1. `eval_script`
-Evaluates Bitcoin Script bytecode or an unlocking/locking script pair.
-
-**Request:**
 ```bash
-curl -X POST http://127.0.0.1:9944 \
+curl -X POST http://127.0.0.1:8545 \
   -H "Content-Type: application/json" \
   -d '{
     "jsonrpc": "2.0",
-    "method": "eval_script",
+    "method": "eth_call",
     "params": {
-      "script_hex": "525393"
+      "bytecode_hex": "6002600301"
     },
     "id": 1
   }'
 ```
-*Note: `525393` corresponds to `OP_2 OP_3 OP_ADD`.*
 
 **Response:**
 ```json
@@ -154,200 +124,33 @@ curl -X POST http://127.0.0.1:9944 \
   "jsonrpc": "2.0",
   "result": {
     "success": true,
+    "reverted": false,
+    "gas_used": 9,
+    "return_data": "",
     "final_stack": ["05"],
+    "storage": {},
     "error": null
   },
   "id": 1
 }
 ```
 
----
-
 ### 2. `createrawtransaction`
-Constructs an unsigned raw transaction hex string from given inputs and outputs.
-
-**Request:**
 ```bash
-curl -X POST http://127.0.0.1:9944 \
+curl -X POST http://127.0.0.1:8545 \
   -H "Content-Type: application/json" \
   -d '{
     "jsonrpc": "2.0",
     "method": "createrawtransaction",
     "params": {
-      "inputs": [
-        {
-          "tx_id_hex": "0000000000000000000000000000000000000000000000000000000000000001",
-          "vout": 0,
-          "sequence": 4294967295
-        }
-      ],
-      "outputs": [
-        {
-          "value": 50000000,
-          "script_hex": "76a914000000000000000000000000000000000000000088ac"
-        }
-      ],
-      "locktime": 0
+      "chain_id": 1337,
+      "nonce": 0,
+      "gas_price": 1000000000,
+      "gas_limit": 21000,
+      "to_hex": "1111111111111111111111111111111111111111",
+      "value": 1000000000000000000,
+      "data_hex": ""
     },
     "id": 1
   }'
 ```
-
-**Response:**
-```json
-{
-  "jsonrpc": "2.0",
-  "result": "010000000100000000000000000000000000000000000000000000000000000000000000010000000000ffffffff0100f20502000000001976a914000000000000000000000000000000000000000088ac00000000",
-  "id": 1
-}
-```
-
----
-
-### 3. `decoderawtransaction`
-Parses raw transaction hex into readable JSON.
-
-**Request:**
-```bash
-curl -X POST http://127.0.0.1:9944 \
-  -H "Content-Type: application/json" \
-  -d '{
-    "jsonrpc": "2.0",
-    "method": "decoderawtransaction",
-    "params": ["<raw_hex_string>"],
-    "id": 1
-  }'
-```
-
----
-
-### 4. `getblockchaininfo`
-Returns current chain state, block height, best hash, and verification progress.
-
-**Request:**
-```bash
-curl -X POST http://127.0.0.1:9944 \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc": "2.0", "method": "getblockchaininfo", "id": 1}'
-```
-
----
-
-### 5. `getnetworkinfo`
-Returns node version, subversion, protocol version, and live connected peer count.
-
-**Request:**
-```bash
-curl -X POST http://127.0.0.1:9944 \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc": "2.0", "method": "getnetworkinfo", "id": 1}'
-```
-
----
-
-### 6. `getmempoolinfo`
-Returns dynamic transaction count, cumulative byte size, and memory usage.
-
-**Request:**
-```bash
-curl -X POST http://127.0.0.1:9944 \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc": "2.0", "method": "getmempoolinfo", "id": 1}'
-```
-
----
-
-### 7. `getblocktemplate`
-Returns the previous block hash, difficulty target bits, and transaction list for miners.
-
-**Request:**
-```bash
-curl -X POST http://127.0.0.1:9944 \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc": "2.0", "method": "getblocktemplate", "id": 1}'
-```
-
----
-
-### 8. `generate`
-Instructs the node to execute the mining loop, find a winning nonce, and output the mined block.
-
-**Request:**
-```bash
-curl -X POST http://127.0.0.1:9944 \
-  -H "Content-Type: application/json" \
-  -d '{
-    "jsonrpc": "2.0",
-    "method": "generate",
-    "params": [1],
-    "id": 1
-  }'
-```
-
-**Response:**
-```json
-{
-  "jsonrpc": "2.0",
-  "result": {
-    "nonce": 341,
-    "block_hash": "00c7e2b19f...",
-    "header_hex": "010000000000...",
-    "height": 1
-  },
-  "id": 1
-}
-```
-
----
-
-### 9. `submitblock`
-Submits a block header and transactions. Verifies Merkle root consistency and difficulty before accepting.
-
-**Request:**
-```bash
-curl -X POST http://127.0.0.1:9944 \
-  -H "Content-Type: application/json" \
-  -d '{
-    "jsonrpc": "2.0",
-    "method": "submitblock",
-    "params": {
-      "header_hex": "<80_byte_header_hex>",
-      "tx_hexes": []
-    },
-    "id": 1
-  }'
-```
-
----
-
-## Testing
-
-Run unit and integration tests across the codebase:
-```bash
-cargo test
-```
-
----
-
-## Contributing
-
-Feel free to open a PR if you feel the need to add any features or modify. Direct pushes to `master` are protected—all changes must be submitted via a Pull Request.
-
-### Contribution Workflow:
-1. Fork or branch from `master`:
-   ```bash
-   git checkout -b feature/your-feature-name
-   ```
-2. Commit and push your changes to your branch:
-   ```bash
-   git push origin feature/your-feature-name
-   ```
-3. Open a Pull Request on GitHub against `master`.
-
----
-
-
-
-Open a PR if you feel the need to contribute to this. For understanding purposes
-
-

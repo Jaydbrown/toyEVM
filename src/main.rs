@@ -1,14 +1,17 @@
 use std::sync::Arc;
 use jsonrpsee::server::Server;
-use toyBitcoinScript::p2p::{Swarm, DEFAULT_SEED_NODES};
-use toyBitcoinScript::rpc::{
+use toyEVM::p2p::{Swarm, DEFAULT_SEED_NODES};
+use toyEVM::rpc::{
     MiningRpcServer, MiningRpcServerImpl,
     NodeRpcServer, NodeRpcServerImpl,
     RawTransactionsRpcServer, RawTransactionsRpcServerImpl,
     StateRpcServer, StateRpcServerImpl,
 };
 
-async fn bind_p2p_swarm(swarm: &Arc<Swarm>, preferred_port: u16) -> Result<(String, u16), Box<dyn std::error::Error>> {
+async fn bind_p2p_swarm(
+    swarm: &Arc<Swarm>,
+    preferred_port: u16,
+) -> Result<(String, u16), Box<dyn std::error::Error>> {
     let mut port = preferred_port;
     loop {
         let addr = format!("127.0.0.1:{}", port);
@@ -24,7 +27,9 @@ async fn bind_p2p_swarm(swarm: &Arc<Swarm>, preferred_port: u16) -> Result<(Stri
     }
 }
 
-async fn build_rpc_server(preferred_port: u16) -> Result<(Server, String, u16), Box<dyn std::error::Error>> {
+async fn build_rpc_server(
+    preferred_port: u16,
+) -> Result<(Server, String, u16), Box<dyn std::error::Error>> {
     let mut port = preferred_port;
     loop {
         let addr = format!("127.0.0.1:{}", port);
@@ -42,7 +47,8 @@ async fn build_rpc_server(preferred_port: u16) -> Result<(Server, String, u16), 
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!(r"
+    println!(
+        r"
        ==============          ====          ==        ==
              ==               ==  ==          ==      == 
              ==              ========          ==    ==  
@@ -50,37 +56,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
        ==    ==            ==        ==           ==     
         ======            ==          ==          ==     
 
-     ====  ==  ======  ====   ====   ==  ==   ==
-     == == ==    ==   ==     ==  ==  ==  ===  ==
-     ====  ==    ==   ==     ==  ==  ==  == = ==
-     == == ==    ==   ==     ==  ==  ==  ==  ===
-     ====  ==    ==    ====   ====   ==  ==   ==
+             ======  ==      ==  ===    ===
+             ==       ==    ==   ====  ====
+             ====      ==  ==    == ==== ==
+             ==         ====     ==  ==  ==
+             ======      ==      ==      ==
 
-          ==   ==   ====   ====    =====
-          ===  ==  ==  ==  == ==   ==   
-          == = ==  ==  ==  ==  ==  ==== 
-          ==  ===  ==  ==  == ==   ==   
-          ==   ==   ====   ====    =====
+           ==   ==   ====   ====    =====
+           ===  ==  ==  ==  == ==   ==   
+           == = ==  ==  ==  ==  ==  ==== 
+           ==  ===  ==  ==  == ==   ==   
+           ==   ==   ====   ====    =====
 
-             Welcome to Jay's Bitcoin Node
-        A light representation of a Bitcoin node
-");
+               Welcome to Jay's EVM Node
+        A lightweight Ethereum Virtual Machine & Node
+"
+    );
 
     // Optional CLI port overrides: cargo run -- [rpc_port] [p2p_port] [extra_peer_addr]
     let args: Vec<String> = std::env::args().collect();
-    let preferred_rpc_port: u16 = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(9944);
-    let preferred_p2p_port: u16 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(8001);
+    let preferred_rpc_port: u16 = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(8545);
+    let preferred_p2p_port: u16 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(30303);
     let manual_peer = args.get(3).map(|s| s.as_str());
 
-    // 0. Initialize Shared Blockchain (with Genesis Block)
-    let blockchain = Arc::new(tokio::sync::RwLock::new(toyBitcoinScript::blockchain::Blockchain::new()));
+    // 0. Initialize Shared Blockchain (with Ethereum Frontier Genesis Block)
+    let blockchain = Arc::new(tokio::sync::RwLock::new(
+        toyEVM::blockchain::Blockchain::new(),
+    ));
 
     // 1. Initialize P2P Swarm & bind to an available port
     let swarm = Arc::new(Swarm::new());
     let (p2p_addr, _p2p_port) = bind_p2p_swarm(&swarm, preferred_p2p_port).await?;
     println!("[P2P] Swarm listening for peers on {}", p2p_addr);
 
-    // 2. Automatically connect to default seed nodes (Bitcoin behavior)
+    // 2. Automatically connect to default seed nodes
     swarm.connect_to_seeds(DEFAULT_SEED_NODES, &p2p_addr).await;
 
     // Connect to any additional manual peer if provided
@@ -102,7 +111,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let handle = server.start(rpc_module);
     println!("[RPC] JSON-RPC Server listening on http://{}", rpc_addr);
     println!("\nAvailable RPC Methods:");
-    println!("  - eval_script");
+    println!("  - eth_call");
+    println!("  - eval_bytecode");
     println!("  - decoderawtransaction");
     println!("  - createrawtransaction");
     println!("  - getblockchaininfo");
